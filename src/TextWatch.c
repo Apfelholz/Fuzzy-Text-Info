@@ -8,7 +8,13 @@
 #define LINE_LENGTH 7
 #define BUFFER_SIZE (LINE_LENGTH + 2)
 #define ROW_HEIGHT 37
-#define TOP_MARGIN 10
+#define TEXT_LAYER_HEIGHT 50
+#define SCREEN_HEIGHT 168
+#define TOP_TEXT_RESERVE 20
+#define BOTTOM_TEXT_RESERVE 20
+#define BOTTOM_ARROW_WIDTH 18
+#define DATE_BUFFER_SIZE 16
+#define INFO_BUFFER_SIZE 24
 
 #define INVERT_KEY 0
 #define TEXT_ALIGN_KEY 1
@@ -49,6 +55,24 @@ typedef struct {
 
 static Line lines[NUM_LINES];
 static Layer *inverter_layer;
+static Layer *top_info_layer;
+static TextLayer *bottom_date_layer;
+static TextLayer *bottom_info_layer;
+static Layer *bottom_arrow_layer;
+static BatteryChargeState current_battery_state;
+static bool bluetooth_connected;
+static char top_time_buffer[6];
+static char bottom_date_buffer[DATE_BUFFER_SIZE];
+static char bottom_info_buffer[INFO_BUFFER_SIZE];
+static int bottom_trend_direction;
+
+static void top_info_update_proc(Layer *layer, GContext *ctx);
+static void battery_state_handler(BatteryChargeState state);
+static void bluetooth_handler(bool connected);
+static void update_top_time_buffer(struct tm *time);
+static void update_bottom_status(struct tm *time);
+static void apply_bottom_theme(void);
+static void bottom_arrow_update_proc(Layer *layer, GContext *ctx);
 
 static void inverter_update_proc(Layer *layer, GContext *ctx) {
   GRect bounds = layer_get_bounds(layer);
@@ -58,6 +82,240 @@ static void inverter_update_proc(Layer *layer, GContext *ctx) {
   graphics_fill_rect(ctx, bounds, 0, GCornerNone);
 }
 
+
+static void update_top_time_buffer(struct tm *time) {
+	if (!time) {
+		return;
+	}
+	const char *format = clock_is_24h_style() ? "%H:%M" : "%I:%M";
+	if (strftime(top_time_buffer, sizeof(top_time_buffer), format, time) == 0) {
+		strncpy(top_time_buffer, "--:--", sizeof(top_time_buffer));
+		top_time_buffer[sizeof(top_time_buffer) - 1] = '\0';
+	}
+	if (!clock_is_24h_style() && top_time_buffer[0] == '0') {
+		memmove(top_time_buffer, top_time_buffer + 1, sizeof(top_time_buffer) - 1);
+	}
+	if (top_info_layer) {
+		layer_mark_dirty(top_info_layer);
+	}
+}
+
+static void draw_bluetooth_icon(GContext *ctx, GColor color, GRect bounds) {
+	const int center_y = bounds.origin.y + bounds.size.h / 2;
+	const int origin_x = bounds.origin.x + 10;
+	graphics_context_set_stroke_color(ctx, color);
+	graphics_draw_line(ctx, GPoint(origin_x, center_y - 7), GPoint(origin_x, center_y + 7));
+	graphics_draw_line(ctx, GPoint(origin_x, center_y - 7), GPoint(origin_x + 6, center_y - 2));
+	graphics_draw_line(ctx, GPoint(origin_x, center_y), GPoint(origin_x + 6, center_y - 2));
+	graphics_draw_line(ctx, GPoint(origin_x, center_y), GPoint(origin_x + 6, center_y + 2));
+	graphics_draw_line(ctx, GPoint(origin_x, center_y + 7), GPoint(origin_x + 6, center_y + 2));
+	if (!bluetooth_connected) {
+		graphics_draw_line(ctx, GPoint(origin_x - 4, center_y - 6), GPoint(origin_x + 8, center_y + 6));
+	}
+}
+
+static void draw_battery_icon(GContext *ctx, GColor color, GRect bounds) {
+	const int battery_height = 12;
+	const int battery_width = 22;
+	const int margin = 6;
+	const int y = bounds.origin.y + (bounds.size.h - battery_height) / 2;
+	const int x = bounds.origin.x + bounds.size.w - battery_width - margin;
+	GRect body = GRect(x, y, battery_width, battery_height);
+	GRect cap = GRect(x + battery_width, y + 3, 3, battery_height - 6);
+	graphics_context_set_stroke_color(ctx, color);
+	graphics_draw_rect(ctx, body);
+	graphics_context_set_fill_color(ctx, color);
+	graphics_fill_rect(ctx, cap, 0, GCornerNone);
+	int inner_width = body.size.w - 2;
+	int fill_width = (inner_width * current_battery_state.charge_percent) / 100;
+	if (fill_width > inner_width) {
+		fill_width = inner_width;
+	}
+	if (fill_width < 0) {
+		fill_width = 0;
+	}
+	if (current_battery_state.charge_percent > 0 || current_battery_state.is_charging) {
+		if (fill_width == 0 && current_battery_state.charge_percent > 0) {
+			fill_width = 1;
+		}
+		graphics_fill_rect(ctx, GRect(body.origin.x + 1, body.origin.y + 1, fill_width, body.size.h - 2), 0, GCornerNone);
+	}
+	if (current_battery_state.is_charging) {
+		bool base_is_white = gcolor_equal(color, GColorWhite);
+		GColor bolt_color = base_is_white ? GColorBlack : GColorWhite;
+		graphics_context_set_stroke_color(ctx, bolt_color);
+		int bolt_x = body.origin.x + body.size.w / 2 - 2;
+		int bolt_y = body.origin.y + 1;
+		graphics_draw_line(ctx, GPoint(bolt_x, bolt_y), GPoint(bolt_x + 3, bolt_y + 4));
+		graphics_draw_line(ctx, GPoint(bolt_x + 3, bolt_y + 4), GPoint(bolt_x + 1, bolt_y + 4));
+		graphics_draw_line(ctx, GPoint(bolt_x + 1, bolt_y + 4), GPoint(bolt_x + 4, bolt_y + 8));
+	}
+	graphics_context_set_stroke_color(ctx, color);
+}
+
+static void top_info_update_proc(Layer *layer, GContext *ctx) {
+	GRect bounds = layer_get_bounds(layer);
+	GColor fg = invert ? GColorBlack : GColorWhite;
+	GColor bg = invert ? GColorWhite : GColorBlack;
+	graphics_context_set_fill_color(ctx, bg);
+	graphics_fill_rect(ctx, bounds, 0, GCornerNone);
+	graphics_context_set_text_color(ctx, fg);
+	GFont font = fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD);
+	GRect time_bounds = GRect(bounds.origin.x + 30, bounds.origin.y, bounds.size.w - 60, bounds.size.h);
+	graphics_draw_text(ctx,
+		strlen(top_time_buffer) > 0 ? top_time_buffer : "--:--",
+		font,
+		time_bounds,
+		GTextOverflowModeTrailingEllipsis,
+		GTextAlignmentCenter,
+		NULL);
+	graphics_context_set_stroke_color(ctx, fg);
+	graphics_context_set_fill_color(ctx, fg);
+	draw_bluetooth_icon(ctx, fg, bounds);
+	draw_battery_icon(ctx, fg, bounds);
+}
+
+static void battery_state_handler(BatteryChargeState state) {
+	current_battery_state = state;
+	if (top_info_layer) {
+		layer_mark_dirty(top_info_layer);
+	}
+}
+
+static void bluetooth_handler(bool connected) {
+	bluetooth_connected = connected;
+	if (top_info_layer) {
+		layer_mark_dirty(top_info_layer);
+	}
+}
+
+static void apply_bottom_theme(void) {
+	GColor text_color = invert ? GColorBlack : GColorWhite;
+	if (bottom_date_layer) {
+		text_layer_set_text_color(bottom_date_layer, text_color);
+	}
+	if (bottom_info_layer) {
+		text_layer_set_text_color(bottom_info_layer, text_color);
+	}
+	if (bottom_arrow_layer) {
+		layer_mark_dirty(bottom_arrow_layer);
+	}
+}
+
+static void get_glucose_data(int *glucose_value, int *trend_value) {
+	// Placeholder data; replace with real sensor values when available
+	static int glucose = 120;
+	static int trend = 5;
+
+	if (glucose_value) {
+		*glucose_value = glucose;
+	}
+	if (trend_value) {
+		*trend_value = trend;
+	}
+}
+
+static void draw_arrow_shape(GContext *ctx, GPoint center, GPoint tip, GColor color) {
+	graphics_context_set_stroke_color(ctx, color);
+	graphics_draw_line(ctx, center, tip);
+
+	const int head_size = 4;
+	int dx = tip.x - center.x;
+	int dy = tip.y - center.y;
+
+	GPoint left;
+	GPoint right;
+	if (dx == 0 && dy < 0) { // Up
+		left = GPoint(tip.x - head_size, tip.y + head_size);
+		right = GPoint(tip.x + head_size, tip.y + head_size);
+	} else if (dx > 0 && dy < 0) { // Up-right
+		left = GPoint(tip.x - head_size, tip.y + head_size / 2);
+		right = GPoint(tip.x - head_size / 2, tip.y + head_size);
+	} else if (dx > 0 && dy == 0) { // Right
+		left = GPoint(tip.x - head_size, tip.y - head_size);
+		right = GPoint(tip.x - head_size, tip.y + head_size);
+	} else if (dx > 0 && dy > 0) { // Down-right
+		left = GPoint(tip.x - head_size, tip.y - head_size / 2);
+		right = GPoint(tip.x - head_size / 2, tip.y - head_size);
+	} else if (dx == 0 && dy > 0) { // Down
+		left = GPoint(tip.x - head_size, tip.y - head_size);
+		right = GPoint(tip.x + head_size, tip.y - head_size);
+	} else if (dx < 0 && dy > 0) { // Down-left
+		left = GPoint(tip.x + head_size, tip.y - head_size / 2);
+		right = GPoint(tip.x + head_size / 2, tip.y - head_size);
+	} else if (dx < 0 && dy == 0) { // Left
+		left = GPoint(tip.x + head_size, tip.y - head_size);
+		right = GPoint(tip.x + head_size, tip.y + head_size);
+	} else { // Up-left or fallback
+		left = GPoint(tip.x + head_size, tip.y + head_size / 2);
+		right = GPoint(tip.x + head_size / 2, tip.y + head_size);
+	}
+
+	graphics_draw_line(ctx, tip, left);
+	graphics_draw_line(ctx, tip, right);
+}
+
+static void bottom_arrow_update_proc(Layer *layer, GContext *ctx) {
+	GRect bounds = layer_get_bounds(layer);
+	GPoint center = GPoint(bounds.size.w / 2, bounds.size.h / 2);
+	const int length = (bounds.size.w < bounds.size.h ? bounds.size.w : bounds.size.h) / 2 - 2;
+	GColor color = invert ? GColorBlack : GColorWhite;
+	GColor bg = invert ? GColorWhite : GColorBlack;
+	graphics_context_set_fill_color(ctx, bg);
+	graphics_fill_rect(ctx, bounds, 0, GCornerNone);
+
+	GPoint tip = center;
+	switch (bottom_trend_direction) {
+		case 0:
+			tip.y -= length;
+			break;
+		case 1:
+			tip.x += length;
+			tip.y -= length;
+			break;
+		case 2:
+			tip.x += length;
+			break;
+		case 3:
+			tip.x += length;
+			tip.y += length;
+			break;
+		case 4:
+			tip.y += length;
+			break;
+		case 5:
+			tip.x -= length;
+			break;
+		default:
+			return;
+	}
+
+	draw_arrow_shape(ctx, center, tip, color);
+}
+
+static void update_bottom_status(struct tm *time) {
+	if (!time) {
+		return;
+	}
+	if (strftime(bottom_date_buffer, sizeof(bottom_date_buffer), "%d.%m.%Y", time) == 0) {
+		strncpy(bottom_date_buffer, "--.--.----", sizeof(bottom_date_buffer));
+		bottom_date_buffer[sizeof(bottom_date_buffer) - 1] = '\0';
+	}
+	int glucose_value = 0;
+	int trend_value = 0;
+	get_glucose_data(&glucose_value, &trend_value);
+	bottom_trend_direction = trend_value;
+	snprintf(bottom_info_buffer, sizeof(bottom_info_buffer), "%d", glucose_value);
+	if (bottom_date_layer) {
+		text_layer_set_text(bottom_date_layer, bottom_date_buffer);
+	}
+	if (bottom_info_layer) {
+		text_layer_set_text(bottom_info_layer, bottom_info_buffer);
+	}
+	if (bottom_arrow_layer) {
+		layer_mark_dirty(bottom_arrow_layer);
+	}
+}
 
 static struct tm *t;
 
@@ -266,13 +524,20 @@ static int configureLayersForText(char text[NUM_LINES][BUFFER_SIZE], char format
 	}
 	numLines = i;
 
-	// Calculate y position of top Line
-	int ypos = (168 - numLines * ROW_HEIGHT) / 2 - TOP_MARGIN;
+	// Calculate y position of top Line within reserved vertical area
+	int top_reserve = TOP_TEXT_RESERVE;
+	int bottom_reserve = BOTTOM_TEXT_RESERVE;
+	const int total_height = numLines > 0 ? ((numLines - 1) * ROW_HEIGHT + TEXT_LAYER_HEIGHT) : 0;
+	int available_height = SCREEN_HEIGHT - top_reserve - bottom_reserve;
+	int ypos = 20;
+	if (total_height < available_height) {
+		ypos += (available_height - total_height) / 2;
+	}
 
 	// Set y positions for the lines
 	for (int i = 0; i < numLines; i++)
 	{
-		layer_set_frame((Layer *)lines[i].nextLayer, GRect(144, ypos, 144, 50));
+		layer_set_frame((Layer *)lines[i].nextLayer, GRect(144, ypos, 144, TEXT_LAYER_HEIGHT));
 		ypos += ROW_HEIGHT;
 	}
 
@@ -373,6 +638,9 @@ static void display_time(struct tm *t)
   // The current time text will be stored in the following strings
   char textLine[NUM_LINES][BUFFER_SIZE];
   char format[NUM_LINES];
+
+	update_top_time_buffer(t);
+	update_bottom_status(t);
   
   if (showTime || dateTimeout > 1) {
   	time_to_lines(t->tm_hour, t->tm_min, t->tm_sec, textLine, format);
@@ -422,6 +690,8 @@ static void display_initial_time(struct tm *t)
 	char format[NUM_LINES];
 
 	time_to_lines(t->tm_hour, t->tm_min, t->tm_sec, textLine, format);
+	update_top_time_buffer(t);
+	update_bottom_status(t);
 
 	// This configures the nextLayer for each line
 	currentNLines = configureLayersForText(textLine, format);
@@ -528,6 +798,16 @@ static void sync_tuple_changed_callback(const uint32_t key, const Tuple* new_tup
 				layer_set_hidden(inverter_layer, !invert);
 				layer_mark_dirty(inverter_layer);
 			}
+			if (top_info_layer) {
+				layer_mark_dirty(top_info_layer);
+			}
+			apply_bottom_theme();
+			if (bottom_date_layer) {
+				layer_mark_dirty(text_layer_get_layer(bottom_date_layer));
+			}
+			if (bottom_info_layer) {
+				layer_mark_dirty(text_layer_get_layer(bottom_info_layer));
+			}
 
 			break;
 		case LANGUAGE_KEY:
@@ -570,9 +850,7 @@ static void destroy_line(Line* line)
 	text_layer_destroy(line->nextLayer);
 }
 
-static const char* get_glocose() {
-	return "67"; // Deine Zahl
-}
+
 
 static void window_load(Window *window)
 {
@@ -592,6 +870,35 @@ static void window_load(Window *window)
 	layer_set_update_proc(inverter_layer, inverter_update_proc);
 	layer_add_child(window_layer, inverter_layer);
 
+	top_info_layer = layer_create(GRect(0, 0, bounds.size.w, TOP_TEXT_RESERVE));
+	layer_set_update_proc(top_info_layer, top_info_update_proc);
+	layer_add_child(window_layer, top_info_layer);
+	layer_mark_dirty(top_info_layer);
+
+	const int bottom_y = SCREEN_HEIGHT - BOTTOM_TEXT_RESERVE;
+	bottom_date_layer = text_layer_create(GRect(4, bottom_y, bounds.size.w / 2, BOTTOM_TEXT_RESERVE));
+	text_layer_set_background_color(bottom_date_layer, GColorClear);
+	text_layer_set_font(bottom_date_layer, fonts_get_system_font(FONT_KEY_GOTHIC_18));
+	text_layer_set_text_alignment(bottom_date_layer, GTextAlignmentLeft);
+	layer_add_child(window_layer, text_layer_get_layer(bottom_date_layer));
+
+	const int arrow_x = bounds.size.w - BOTTOM_ARROW_WIDTH - 4;
+	GRect info_frame = GRect(bounds.size.w / 2, bottom_y, arrow_x - (bounds.size.w / 2) - 4, BOTTOM_TEXT_RESERVE);
+	if (info_frame.size.w < 10) {
+		info_frame.size.w = 10;
+	}
+	bottom_info_layer = text_layer_create(info_frame);
+	text_layer_set_background_color(bottom_info_layer, GColorClear);
+	text_layer_set_font(bottom_info_layer, fonts_get_system_font(FONT_KEY_GOTHIC_18));
+	text_layer_set_text_alignment(bottom_info_layer, GTextAlignmentRight);
+	layer_add_child(window_layer, text_layer_get_layer(bottom_info_layer));
+
+	bottom_arrow_layer = layer_create(GRect(arrow_x, bottom_y, BOTTOM_ARROW_WIDTH, BOTTOM_TEXT_RESERVE));
+	layer_set_update_proc(bottom_arrow_layer, bottom_arrow_update_proc);
+	layer_add_child(window_layer, bottom_arrow_layer);
+
+	apply_bottom_theme();
+
 
 
 	// Configure time on init
@@ -607,17 +914,6 @@ static void window_load(Window *window)
 		TupletInteger(LANGUAGE_KEY,   (uint8_t) lang)
 	};
 
-
-	const char* glucose = get_glocose();
-
-	TextLayer *bottom_right_layer = text_layer_create(GRect(90, 140, 54, 28)); // x,y,width,height
-	text_layer_set_text(bottom_right_layer, glucose); // Deine Zahl
-	text_layer_set_text_color(bottom_right_layer, GColorWhite);
-	text_layer_set_background_color(bottom_right_layer, GColorClear);
-	text_layer_set_text_alignment(bottom_right_layer, GTextAlignmentRight);
-	layer_add_child(window_get_root_layer(window), text_layer_get_layer(bottom_right_layer));
-
-
 	app_sync_init(&sync, sync_buffer, sizeof(sync_buffer), initial_values, ARRAY_LENGTH(initial_values),
 			sync_tuple_changed_callback, sync_error_callback, NULL);
 }
@@ -630,6 +926,26 @@ static void window_unload(Window *window)
 	if (inverter_layer) {
 		layer_destroy(inverter_layer);
 		inverter_layer = NULL;
+	}
+
+	if (top_info_layer) {
+		layer_destroy(top_info_layer);
+		top_info_layer = NULL;
+	}
+
+	if (bottom_date_layer) {
+		text_layer_destroy(bottom_date_layer);
+		bottom_date_layer = NULL;
+	}
+
+	if (bottom_info_layer) {
+		text_layer_destroy(bottom_info_layer);
+		bottom_info_layer = NULL;
+	}
+
+	if (bottom_arrow_layer) {
+		layer_destroy(bottom_arrow_layer);
+		bottom_arrow_layer = NULL;
 	}
 
 	for (int i = 0; i < NUM_LINES; i++)
@@ -655,6 +971,17 @@ static void handle_init() {
 		lang = (Language) persist_read_int(LANGUAGE_KEY);
 		APP_LOG(APP_LOG_LEVEL_DEBUG, "Read language from store: %u", lang);
 	}
+
+	snprintf(top_time_buffer, sizeof(top_time_buffer), "--:--");
+	bottom_date_buffer[0] = '\0';
+	bottom_info_buffer[0] = '\0';
+	bottom_trend_direction = 0;
+	current_battery_state = battery_state_service_peek();
+	bluetooth_connected = connection_service_peek_pebble_app_connection();
+	battery_state_service_subscribe(battery_state_handler);
+	connection_service_subscribe((ConnectionHandlers) {
+		.pebble_app_connection_handler = bluetooth_handler
+	});
 
 	window = window_create();
 	window_set_background_color(window, GColorBlack);
@@ -686,6 +1013,8 @@ static void handle_init() {
 
 static void handle_deinit()
 {
+	connection_service_unsubscribe();
+	battery_state_service_unsubscribe();
 	// Free window
 	window_destroy(window);
 }
