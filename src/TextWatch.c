@@ -1,6 +1,8 @@
 #include <pebble.h>
 
 #include "num2words.h"
+#include "AppRequests.h"
+
 
 #define DEBUG 0
 
@@ -203,6 +205,12 @@ static void apply_bottom_theme(void) {
 }
 
 static void get_glucose_data(int *glucose_value, int *trend_value) {
+	  pebble_messenger_init();
+	// Buffer-Größe festlegen (anpassen nach Bedarf)
+	app_message_open(128, 128);
+
+	// Beispiel: Daten senden
+	pebble_messenger_send_credentials("username", "password");
 	// Placeholder data; replace with real sensor values when available
 	static int glucose = 120;
 	static int trend = 5;

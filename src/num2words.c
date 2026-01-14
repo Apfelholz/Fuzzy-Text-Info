@@ -1,12 +1,13 @@
 #include "num2words.h"
-#include "strings-ca.h"
-#include "strings-de.h"
-#include "strings-en_GB.h"
-#include "strings-en_US.h"
-#include "strings-es.h"
-#include "strings-fr.h"
-#include "strings-no.h"
-#include "strings-sv.h"
+#include "lang/strings-ca.h"
+#include "lang/strings-de.h"
+#include "lang/strings-en_GB.h"
+#include "lang/strings-en_US.h"
+#include "lang/strings-es.h"
+#include "lang/strings-fr.h"
+#include "lang/strings-no.h"
+#include "lang/strings-sv.h"
+
 #include "string.h"
 
 size_t min(const size_t a, const size_t b) {
