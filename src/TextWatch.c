@@ -355,15 +355,28 @@ static void update_bottom_status(struct tm *time) {
 	if (!time) {
 		return;
 	}
+	// Update date display
 	if (strftime(bottom_date_buffer, sizeof(bottom_date_buffer), "%d.%m.%Y", time) == 0) {
 		strncpy(bottom_date_buffer, "--.--.----", sizeof(bottom_date_buffer));
 		bottom_date_buffer[sizeof(bottom_date_buffer) - 1] = '\0';
 	}
+	
+	// Get glucose data from messenger
 	int glucose_value = 0;
-	int trend_value = 0;
+	int trend_value = TREND_UNKNOWN;
 	get_glucose_data(&glucose_value, &trend_value);
+	
+	// Update trend direction for arrow display
 	bottom_trend_direction = trend_value;
-	snprintf(bottom_info_buffer, sizeof(bottom_info_buffer), "%d", glucose_value);
+	
+	// Format glucose display - show "---" if no data
+	if (glucose_value > 0) {
+		snprintf(bottom_info_buffer, sizeof(bottom_info_buffer), "%d", glucose_value);
+	} else {
+		snprintf(bottom_info_buffer, sizeof(bottom_info_buffer), "---");
+	}
+	
+	// Update display layers
 	if (bottom_date_layer) {
 		text_layer_set_text(bottom_date_layer, bottom_date_buffer);
 	}
