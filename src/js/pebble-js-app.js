@@ -1,7 +1,20 @@
-var VERSION = "1.2.1";
+var VERSION = "1.3.0";
 
 var isReady = false;
 var callbacks = [];
+
+// Message keys - must match AppRequests.h
+var KEYS = {
+  // Settings keys (0-2 for AppSync)
+  INVERT: 0,
+  TEXT_ALIGN: 1,
+  LANGUAGE: 2,
+  // Glucose data keys (10+)
+  GLUCOSE_VALUE: 10,
+  TREND_VALUE: 11,
+  REQUEST_DATA: 12,
+  TIMESTAMP: 13
+};
 
 var alignments = {
   center: 0,
@@ -20,8 +33,16 @@ var langs = {
   sv:    7
 };
 
+// Store latest glucose data
+var glucoseData = {
+  value: 0,
+  trend: -1,
+  timestamp: 0
+};
+
 function readyCallback(event) {
   isReady = true;
+  console.log("Pebble JS ready");
   var callback;
   while (callbacks.length > 0) {
     callback = callbacks.shift();
@@ -41,19 +62,39 @@ function webviewclosed(event) {
   var resp = event.response;
   console.log('configuration response: '+ resp + ' ('+ typeof resp +')');
 
-  var options = JSON.parse(resp);
-  if (typeof options.invert === 'undefined' &&
-      typeof options.text_align === 'undefined' &&
-      typeof options.lang === 'undefined') {
+  if (!resp || resp === 'CANCELLED') {
+    console.log('Configuration cancelled');
     return;
   }
 
-  onReady(function() {
-    setOptions(resp);
+  try {
+    var options = JSON.parse(resp);
+    if (typeof options.invert === 'undefined' &&
+        typeof options.text_align === 'undefined' &&
+        typeof options.lang === 'undefined') {
+      return;
+    }
 
-    var message = prepareConfiguration(resp);
-    transmitConfiguration(message);
-  });
+    onReady(function() {
+      setOptions(resp);
+      var message = prepareConfiguration(resp);
+      transmitConfiguration(message);
+    });
+  } catch (e) {
+    console.log('Error parsing configuration: ' + e.message);
+  }
+}
+
+// Handle messages from watch
+function appmessage(event) {
+  console.log('Received message from watch');
+  var payload = event.payload;
+  
+  // Check if watch is requesting glucose data
+  if (payload && payload[KEYS.REQUEST_DATA]) {
+    console.log('Watch requested glucose data');
+    sendGlucoseData();
+  }
 }
 
 // Retrieves stored configuration from localStorage.
@@ -71,24 +112,60 @@ function setOptions(options) {
 // a JSON message to send to the watch face.
 function prepareConfiguration(serialized_settings) {
   var settings = JSON.parse(serialized_settings);
-  return {
-    "0": settings.invert ? 1 : 0,
-    "1": alignments[settings.text_align],
-    "2": langs[settings.lang]
-  };
+  var message = {};
+  message[KEYS.INVERT] = settings.invert ? 1 : 0;
+  message[KEYS.TEXT_ALIGN] = alignments[settings.text_align] || 0;
+  message[KEYS.LANGUAGE] = langs[settings.lang] || 3;
+  return message;
 }
 
 // Takes a JSON message as input.  Sends the message to the watch.
 function transmitConfiguration(settings) {
-  console.log('sending message: '+ JSON.stringify(settings));
+  console.log('Sending configuration: '+ JSON.stringify(settings));
   Pebble.sendAppMessage(settings, function(event) {
-    // Message delivered successfully
+    console.log('Configuration delivered successfully');
   }, logError);
 }
 
+// Send glucose data to watch
+function sendGlucoseData() {
+  if (glucoseData.value <= 0) {
+    console.log('No glucose data to send');
+    return;
+  }
+  
+  var message = {};
+  message[KEYS.GLUCOSE_VALUE] = glucoseData.value;
+  message[KEYS.TREND_VALUE] = glucoseData.trend;
+  message[KEYS.TIMESTAMP] = glucoseData.timestamp;
+  
+  console.log('Sending glucose data: ' + JSON.stringify(message));
+  Pebble.sendAppMessage(message, function(event) {
+    console.log('Glucose data delivered');
+  }, logError);
+}
+
+// Update glucose data (called from companion app or external source)
+function updateGlucoseData(value, trend, timestamp) {
+  glucoseData.value = value || 0;
+  glucoseData.trend = (typeof trend !== 'undefined') ? trend : -1;
+  glucoseData.timestamp = timestamp || Math.floor(Date.now() / 1000);
+  
+  console.log('Glucose updated: ' + glucoseData.value + ' mg/dL, trend: ' + glucoseData.trend);
+  
+  // Automatically send to watch when connected
+  onReady(function() {
+    sendGlucoseData();
+  });
+}
+
+// Expose function for external apps to push glucose data
+// Usage: Pebble.sendAppMessage with glucose keys, or companion app integration
+Pebble.updateGlucose = updateGlucoseData;
+
 function logError(event) {
-  console.log('Unable to deliver message with transactionId='+
-              event.data.transactionId +' ; Error is'+ event.error.message);
+  console.log('Unable to deliver message with transactionId=' +
+              event.data.transactionId + '; Error: ' + JSON.stringify(event.error));
 }
 
 function onReady(callback) {
@@ -100,11 +177,15 @@ function onReady(callback) {
   }
 }
 
+// Register event listeners
 Pebble.addEventListener("ready", readyCallback);
 Pebble.addEventListener("showConfiguration", showConfiguration);
 Pebble.addEventListener("webviewclosed", webviewclosed);
+Pebble.addEventListener("appmessage", appmessage);
 
+// Send initial configuration on ready
 onReady(function(event) {
   var message = prepareConfiguration(getOptions());
   transmitConfiguration(message);
 });
+

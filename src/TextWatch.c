@@ -252,13 +252,27 @@ static void get_glucose_data(int *glucose_value, int *trend_value) {
 	pebble_messenger_get_glucose(glucose_value, trend_value);
 }
 
-// Callback when new glucose data is received from Android app
+// Callback when new glucose data is received from phone
 static void glucose_data_received_callback(int glucose_value, int trend_value) {
-	APP_LOG(APP_LOG_LEVEL_INFO, "Glucose data received: %d, trend: %d", glucose_value, trend_value);
-	trend_value = trend_value;
-	glucose_value = glucose_value;
+	APP_LOG(APP_LOG_LEVEL_INFO, "Glucose data received: %d mg/dL, trend: %d", glucose_value, trend_value);
 	
-	// Update the display with the new data
+	// Update the trend direction for the arrow
+	bottom_trend_direction = trend_value;
+	
+	// Update the glucose display
+	if (glucose_value > 0) {
+		snprintf(bottom_info_buffer, sizeof(bottom_info_buffer), "%d", glucose_value);
+	} else {
+		snprintf(bottom_info_buffer, sizeof(bottom_info_buffer), "---");
+	}
+	
+	// Refresh the display layers
+	if (bottom_info_layer) {
+		text_layer_set_text(bottom_info_layer, bottom_info_buffer);
+	}
+	if (bottom_arrow_layer) {
+		layer_mark_dirty(bottom_arrow_layer);
+	}
 }
 
 static void draw_arrow_shape(GContext *ctx, GPoint center, GPoint tip, GColor color) {
@@ -1062,7 +1076,8 @@ static void handle_init() {
 		.pebble_app_connection_handler = bluetooth_handler
 	});
 
-	// Initialize messenger with callback for receiving glucose data from Android
+	// Initialize messenger with callback for receiving glucose data
+	// Note: Must be called BEFORE app_message_open()
 	pebble_messenger_init(glucose_data_received_callback);
 
 	window = window_create();
@@ -1072,8 +1087,9 @@ static void handle_init() {
 		.unload = window_unload
 	});
 
-	// Initialize message queue (already done in pebble_messenger_init, but set up for AppSync)
-	const int inbound_size = 128;
+	// Open app message channel - larger buffers for glucose data
+	// Note: Only call once, messenger_init registers callbacks but doesn't open
+	const int inbound_size = 256;
 	const int outbound_size = 128;
 	app_message_open(inbound_size, outbound_size);
 
@@ -1095,8 +1111,11 @@ static void handle_init() {
 
 static void handle_deinit()
 {
+	tick_timer_service_unsubscribe();
+	accel_tap_service_unsubscribe();
 	connection_service_unsubscribe();
 	battery_state_service_unsubscribe();
+	pebble_messenger_deinit();
 	// Free window
 	window_destroy(window);
 }
