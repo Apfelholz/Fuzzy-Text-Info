@@ -1,6 +1,9 @@
 {
   "name": "Fuzzy Text INFO",
   "author": "Jonathan Salomo",
+  "contributors": [
+    "Benjamin Kania"
+  ],
   "version": "1.0.0",
   "private": true,
   "keywords": [
