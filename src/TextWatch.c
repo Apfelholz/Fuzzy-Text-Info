@@ -1096,18 +1096,19 @@ static void window_load(Window *window)
 	Layer *window_layer = window_get_root_layer(window);
 	GRect bounds = layer_get_frame(window_layer);
 
-	// Init and load lines
+	// Create inverter layer FIRST so it's in the background
+	inverter_layer = layer_create(bounds);
+	layer_set_hidden(inverter_layer, !invert);
+	layer_set_update_proc(inverter_layer, inverter_update_proc);
+	layer_add_child(window_layer, inverter_layer);
+
+	// Init and load lines (on top of inverter layer)
 	for (int i = 0; i < NUM_LINES; i++)
 	{
 		init_line(&lines[i]);
 		layer_add_child(window_layer, (Layer *)lines[i].currentLayer);
 		layer_add_child(window_layer, (Layer *)lines[i].nextLayer);
 	}
-
-	inverter_layer = layer_create(bounds);
-	layer_set_hidden(inverter_layer, !invert);
-	layer_set_update_proc(inverter_layer, inverter_update_proc);
-	layer_add_child(window_layer, inverter_layer);
 
 	top_info_layer = layer_create(GRect(0, 0, bounds.size.w, TOP_TEXT_RESERVE));
 	layer_set_update_proc(top_info_layer, top_info_update_proc);
