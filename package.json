@@ -1,5 +1,5 @@
 {
-  "name": "Fuzzy Text INFO",
+  "name": "Fuzzy Glucose",
   "author": "Jonathan Salomo",
   "contributors": [
     "Benjamin Kania"
@@ -24,7 +24,7 @@
     ],
     "projectType": "native",
     "clayConfig": "src/pkjs/config.js",
-    "displayName": "Fuzzy Text INFO",
+    "displayName": "Fuzzy Glucose",
     "uuid": "11490515-3888-4583-9e40-367ed931571d",
     "watchapp": {
       "watchface": true,
