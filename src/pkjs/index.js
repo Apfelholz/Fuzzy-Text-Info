@@ -43,7 +43,7 @@ var glucoseData = {
 
 // Cache configuration
 var CACHE_KEY = 'glucose_cache';
-var CACHE_MAX_AGE_MS = 10 * 60 * 1000; // 10 minutes - glucose updates every 15 min
+var CACHE_MAX_AGE_MS = 5 * 60 * 1000; // 10 minutes - glucose updates every 15 min
 
 // Glucose cache functions
 function getCachedGlucose() {
