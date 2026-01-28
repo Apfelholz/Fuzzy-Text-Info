@@ -52,36 +52,6 @@ const char* const RELS_DE[] = {
   "fünf vor *$2"
 };
 
-Weiter zum Inhalt
-Chatverlauf
-
-
-Du:
- deutsche:
-const char* const MONTHS_EN_US[] = {
-  "jan",
-  "feb",
-  "mar",
-  "apr",
-  "may",
-  "jun",
-  "jul",
-  "aug",
-  "sep",
-  "nov",
-  "dec"
-};
-
-const char* const DAYS_EN_US[] = {
-  "sun",
-  "mon",
-  "tue",
-  "wed",
-  "thur",
-  "fri",
-  "sat"
-};
-
 const char* const MONTHS_DE_DE[] = {
   "jan",
   "feb",
