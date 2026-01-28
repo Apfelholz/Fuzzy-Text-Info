@@ -9,15 +9,14 @@
 #define KEY_REQUEST_DATA 12
 #define KEY_TIMESTAMP 13
 
-// Trend direction values (matching CGM conventions)
+// Trend direction values (matching Dexcom conventions)
+// 1 => ⬇️, 2 => ↘️, 3 => ➡️, 4 => ↗️, 5 => ⬆️
 typedef enum {
-  TREND_DOUBLE_UP = 0,      // Rising rapidly
-  TREND_SINGLE_UP = 1,      // Rising
-  TREND_FORTY_FIVE_UP = 2,  // Rising slowly
-  TREND_FLAT = 3,           // Stable
-  TREND_FORTY_FIVE_DOWN = 4,// Falling slowly
-  TREND_SINGLE_DOWN = 5,    // Falling
-  TREND_DOUBLE_DOWN = 6,    // Falling rapidly
+  TREND_DOWN = 1,           // ⬇️ Down
+  TREND_DOWN_RIGHT = 2,     // ↘️ Down-right (45 down)
+  TREND_FLAT = 3,           // ➡️ Right/Flat
+  TREND_UP_RIGHT = 4,       // ↗️ Up-right (45 up)
+  TREND_UP = 5,             // ⬆️ Up
   TREND_UNKNOWN = -1        // Unknown/no data
 } GlucoseTrend;
 

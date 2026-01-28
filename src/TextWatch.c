@@ -322,28 +322,24 @@ static void bottom_arrow_update_proc(Layer *layer, GContext *ctx) {
 	graphics_context_set_stroke_color(ctx, color);
 
 	GPoint tip = center;
+	// Trend values: 1=⬇️, 2=↘️, 3=➡️, 4=↗️, 5=⬆️
 	switch (bottom_trend_direction) {
-		case TREND_DOUBLE_UP:
-			tip.y -= length;
-			break;
-		case TREND_SINGLE_UP:
-			tip.x += length;
-			tip.y -= length;
-			break;
-		case TREND_FORTY_FIVE_UP:
-			tip.x += length;
-			break;
-		case TREND_FLAT:
-			tip.x += length;
-			break;
-		case TREND_FORTY_FIVE_DOWN:
+		case TREND_DOWN:        // 1 => ⬇️ Down
 			tip.y += length;
 			break;
-		case TREND_SINGLE_DOWN:
-			tip.x -= length;
-			break;
-		case TREND_DOUBLE_DOWN:
+		case TREND_DOWN_RIGHT:  // 2 => ↘️ Down-right
+			tip.x += length;
 			tip.y += length;
+			break;
+		case TREND_FLAT:        // 3 => ➡️ Right/Flat
+			tip.x += length;
+			break;
+		case TREND_UP_RIGHT:    // 4 => ↗️ Up-right
+			tip.x += length;
+			tip.y -= length;
+			break;
+		case TREND_UP:          // 5 => ⬆️ Up
+			tip.y -= length;
 			break;
 		default:
 			return;
