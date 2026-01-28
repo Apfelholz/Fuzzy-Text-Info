@@ -18,8 +18,9 @@ static int s_trend_value = -1;       // Default: unknown trend (-1)
 static time_t s_last_glucose_timestamp = 0;  // Unix time of last valid data
 static time_t s_last_request_timestamp = 0;  // Unix time of last request sent
 static const time_t GLUCOSE_STALE_SECONDS = 15 * 60;  // Consider data stale after 15 minutes
-static const time_t GLUCOSE_REQUEST_THROTTLE_SECONDS = 2 * 60;  // 5 minutes between requests
+static const time_t GLUCOSE_REQUEST_THROTTLE_SECONDS = 60;  // 1 minute between requests (reduced for better reliability)
 static bool s_initialized = false;
+static bool s_last_request_failed = false;  // Track if last request failed
 
 // Forward declaration for AppSync callback compatibility
 static AppMessageInboxReceived s_original_inbox_handler = NULL;
@@ -65,6 +66,11 @@ static void process_glucose_message(DictionaryIterator *iterator) {
     s_last_glucose_timestamp = (time_t)timestamp_tuple->value->int32;
   } else if (data_updated) {
     s_last_glucose_timestamp = time(NULL);
+  }
+  
+  // Reset failed flag since we successfully received data
+  if (data_updated) {
+    s_last_request_failed = false;
   }
   
   // Notify via callback if data was updated and callback is registered
@@ -225,12 +231,22 @@ void pebble_messenger_open(uint32_t inbox_size, uint32_t outbox_size) {
 
 // Request glucose data from phone (sends a request message)
 void pebble_messenger_request_glucose(void) {
+  // Check Bluetooth connection first
+  if (!connection_service_peek_pebble_app_connection()) {
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Glucose request skipped: Bluetooth not connected");
+    s_last_request_failed = true;
+    return;
+  }
+  
   // Throttle requests to prevent spamming the message queue
+  // Use shorter throttle if last request failed (retry sooner)
   time_t now = time(NULL);
+  time_t throttle_time = s_last_request_failed ? 30 : GLUCOSE_REQUEST_THROTTLE_SECONDS;
+  
   if (now != (time_t)-1 && s_last_request_timestamp != 0) {
-    if ((now - s_last_request_timestamp) < GLUCOSE_REQUEST_THROTTLE_SECONDS) {
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "Glucose request throttled (last request %ld seconds ago)", 
-              (long)(now - s_last_request_timestamp));
+    if ((now - s_last_request_timestamp) < throttle_time) {
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "Glucose request throttled (last request %ld seconds ago, throttle: %ld)", 
+              (long)(now - s_last_request_timestamp), (long)throttle_time);
       return;
     }
   }
@@ -240,6 +256,7 @@ void pebble_messenger_request_glucose(void) {
   
   if (result != APP_MSG_OK) {
     APP_LOG(APP_LOG_LEVEL_ERROR, "Failed to begin message: %d", (int)result);
+    s_last_request_failed = true;
     return;
   }
   
@@ -250,8 +267,10 @@ void pebble_messenger_request_glucose(void) {
   result = app_message_outbox_send();
   if (result != APP_MSG_OK) {
     APP_LOG(APP_LOG_LEVEL_ERROR, "Failed to send request: %d", (int)result);
+    s_last_request_failed = true;
   } else {
     s_last_request_timestamp = now;
+    s_last_request_failed = false;
     APP_LOG(APP_LOG_LEVEL_DEBUG, "Glucose data requested");
   }
 }

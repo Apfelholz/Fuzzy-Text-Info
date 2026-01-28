@@ -612,6 +612,35 @@ Pebble.addEventListener("showConfiguration", showConfiguration);
 Pebble.addEventListener("webviewclosed", webviewclosed);
 Pebble.addEventListener("appmessage", appmessage);
 
+// Automatic glucose refresh interval (5 minutes in milliseconds)
+var GLUCOSE_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+var glucoseRefreshTimer = null;
+
+// Function to fetch and send glucose data proactively
+function refreshGlucoseData() {
+  console.log('Auto-refresh: fetching glucose data');
+  // Force refresh to get latest data from API (not cache)
+  getGlucoseData(true).then(function(data) {
+    if (data) {
+      updateGlucoseData(data.value, data.trend, data.ts);
+      console.log('Auto-refresh: glucose data sent to watch');
+    } else {
+      console.log('Auto-refresh: no glucose data available');
+    }
+  }).catch(function(err) {
+    console.log('Auto-refresh error: ' + err.message);
+  });
+}
+
+// Start the automatic glucose refresh timer
+function startGlucoseRefreshTimer() {
+  if (glucoseRefreshTimer) {
+    clearInterval(glucoseRefreshTimer);
+  }
+  glucoseRefreshTimer = setInterval(refreshGlucoseData, GLUCOSE_REFRESH_INTERVAL_MS);
+  console.log('Glucose refresh timer started (interval: ' + (GLUCOSE_REFRESH_INTERVAL_MS / 1000) + 's)');
+}
+
 // Send initial configuration on ready
 onReady(function(event) {
   var message = prepareConfiguration(getOptions());
@@ -627,5 +656,9 @@ onReady(function(event) {
   }).catch(function(err) {
     console.log('Error fetching glucose at startup: ' + err.message);
   });
+  
+  // Start automatic glucose refresh timer
+  // This ensures the watch always gets updated data even if it doesn't request it
+  startGlucoseRefreshTimer();
 });
 

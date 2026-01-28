@@ -823,8 +823,18 @@ static void handle_minute_tick(struct tm *tick_time, TimeUnits units_changed)
   
 	display_time(t);
 	
-	// Request glucose data every 5 minutes (at 0, 5, 10, 15, etc.)
-	if (t->tm_min % 5 == 0) {
+	// Request glucose data every 5 minutes (at 0, 5, 10, 15, 20, etc.)
+	// Also request if we don't have valid data (messenger will handle throttling)
+	bool should_request = (t->tm_min % 5 == 0);
+	
+	// If we don't have glucose data, try more frequently (every minute)
+	// The messenger's throttle will prevent actual spam
+	if (!pebble_messenger_has_glucose_data()) {
+		should_request = true;
+		APP_LOG(APP_LOG_LEVEL_DEBUG, "No valid glucose data, requesting...");
+	}
+	
+	if (should_request) {
 		pebble_messenger_request_glucose();
 	}
 }
